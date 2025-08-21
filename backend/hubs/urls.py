@@ -1,13 +1,13 @@
 # hubs/urls.py
 from django.urls import path, include
 from rest_framework_nested import routers
-from .views import HubViewSet
-from channels.views import ChannelViewSet # Import the ChannelViewSet
+# Import both ViewSets from the local views.py file
+from .views import HubViewSet, ChannelViewSet 
 
 router = routers.DefaultRouter()
 router.register(r'hubs', HubViewSet, basename='hub')
 
-# Create a nested router for channels within hubs
+# This part remains the same
 hubs_router = routers.NestedDefaultRouter(router, r'hubs', lookup='hub')
 hubs_router.register(r'channels', ChannelViewSet, basename='hub-channels')
 
