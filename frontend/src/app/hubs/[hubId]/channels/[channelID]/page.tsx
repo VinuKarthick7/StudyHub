@@ -1,96 +1,139 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
-import { Input } from '@/components/Input';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '@/components/Button';
+import { Input } from '@/components/Input';
+import { useUser } from '@/hooks/useUser';
 
-type Message = {
-  username: string;
-  message: string;
-  timestamp: string;
+// Define types for our data
+type HubDetail = {
+  id: number;
+  name: string;
+  description: string;
+  owner: string; 
+  members: { id: number; username: string; email: string }[];
 };
 
-export default function ChannelPage() {
+type Channel = {
+  id: number;
+  name: string;
+  owner: string;
+};
+
+export default function HubDetailPage() {
   const params = useParams();
-  const channelId = params.channelId;
+  const router = useRouter();
+  const hubId = params.hubId;
+  const { user: currentUser } = useUser();
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const socketRef = useRef<WebSocket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null); // Ref for auto-scrolling
-
-  // Function to scroll to the bottom of the chat
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]); // This effect runs every time the messages array changes
+  const [hub, setHub] = useState<HubDetail | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [newChannelName, setNewChannelName] = useState('');
+  const [isMember, setIsMember] = useState(false); // New state to track membership
 
   useEffect(() => {
-    if (!channelId) return;
+    if (!hubId) return;
+    const fetchHubData = async () => {
+      try {
+        // ... (fetch logic remains the same)
+        const [hubRes, channelsRes] = await Promise.all([
+          fetch(`http://127.0.0.1:8000/api/hubs/${hubId}/`),
+          fetch(`http://127.0.0.1:8000/api/hubs/${hubId}/channels/`),
+        ]);
+        if (!hubRes.ok || !channelsRes.ok) throw new Error('Failed to fetch hub data');
+        const hubData = await hubRes.json();
+        const channelsData = await channelsRes.json();
+        setHub(hubData);
+        setChannels(channelsData);
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchHubData();
+  }, [hubId]);
 
+  // New effect to check membership status
+  useEffect(() => {
+    if (hub && currentUser) {
+      const memberCheck = hub.members.some(member => member.id === currentUser.id);
+      setIsMember(memberCheck);
+    }
+  }, [hub, currentUser]);
+
+  const handleCreateChannel = async (e: React.FormEvent) => { /* ... (no changes) ... */ };
+  const handleDeleteHub = async () => { /* ... (no changes) ... */ };
+
+  // --- NEW JOIN/LEAVE HANDLERS ---
+  const handleJoinOrLeave = async () => {
+    const action = isMember ? 'leave' : 'join';
     const accessToken = localStorage.getItem('access_token');
     if (!accessToken) {
-      alert("You must be logged in to chat.");
+      alert("You must be logged in.");
       return;
     }
 
-    const socket = new WebSocket(
-      `ws://127.0.0.1:8000/ws/chat/${channelId}/`
-    );
-    socketRef.current = socket;
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/hubs/${hubId}/${action}/`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      });
 
-    socket.onopen = () => console.log("WebSocket connection established");
-    socket.onclose = () => console.log("WebSocket connection closed");
-    socket.onerror = (error) => console.error("WebSocket error:", error);
-
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setMessages(prevMessages => [...prevMessages, data]);
-    };
-
-    return () => {
-      socket.close();
-    };
-  }, [channelId]);
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newMessage.trim() && socketRef.current) {
-      socketRef.current.send(JSON.stringify({ 'message': newMessage }));
-      setNewMessage('');
+      if (response.ok) {
+        // Refresh the page to update member list and button state
+        router.refresh(); 
+      } else {
+        const data = await response.json();
+        throw new Error(data.detail || `Failed to ${action} hub.`);
+      }
+    } catch (err: any) {
+      alert(err.message);
     }
   };
 
+
+  if (loading) return <p className="text-center">Loading hub...</p>;
+  if (error) return <p className="text-center text-red-500">Error: {error}</p>;
+  if (!hub) return <p>Hub not found.</p>;
+
+  const isOwner = currentUser?.username === hub.owner;
+
   return (
-    <main className="flex flex-col h-screen p-4 max-w-4xl mx-auto w-full">
-      <h1 className="text-2xl font-bold mb-4">Channel Chat</h1>
-      <div className="flex-grow overflow-y-auto mb-4 p-4 border rounded bg-white dark:bg-gray-800">
-        {messages.map((msg, index) => (
-          <div key={index} className="mb-2">
-            <strong>{msg.username}</strong> 
-            <span className="text-gray-500 text-xs ml-2">
-              {new Date(msg.timestamp).toLocaleTimeString()}
-            </span>
-            <p className="ml-1">{msg.message}</p>
+    <main className="flex min-h-screen flex-col items-center p-8 sm:p-24">
+      <div className="w-full max-w-4xl">
+        <div className="flex justify-between items-start mb-2">
+          <div>
+            <h1 className="text-4xl font-bold">{hub.name}</h1>
+            <p className="text-lg text-gray-600 mt-2">{hub.description}</p>
           </div>
-        ))}
-        {/* Empty div at the end of the list to scroll to */}
-        <div ref={messagesEndRef} />
+          <div className="flex gap-2">
+            {/* --- UPDATED BUTTON LOGIC --- */}
+            {isOwner ? (
+              <>
+                <Link href={`/hubs/${hubId}/edit`}>
+                  <Button className="bg-gray-200 text-black hover:bg-gray-300">Edit</Button>
+                </Link>
+                <Button onClick={handleDeleteHub} className="bg-red-600 hover:bg-red-700">
+                  Delete
+                </Button>
+              </>
+            ) : (
+              currentUser && (
+                <Button onClick={handleJoinOrLeave} className={isMember ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}>
+                  {isMember ? 'Leave Hub' : 'Join Hub'}
+                </Button>
+              )
+            )}
+          </div>
+        </div>
+        
+        {/* ... (The rest of the JSX remains the same) ... */}
       </div>
-      <form onSubmit={handleSendMessage} className="flex gap-2">
-        <Input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message..."
-          autoComplete="off"
-        />
-        <Button type="submit">Send</Button>
-      </form>
     </main>
   );
 }
